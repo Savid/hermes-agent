@@ -1006,6 +1006,8 @@ export interface Translations {
     goTo: string
     goToSession: string
     branches: string
+    projects: string
+    openFolder: string
     commands: string
     startInBranch: (branch: string) => string
     commandCenter: string

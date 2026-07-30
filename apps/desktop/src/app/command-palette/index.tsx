@@ -24,6 +24,7 @@ import {
   Cpu,
   Download,
   Egg,
+  FolderOpen,
   GitBranch,
   Globe,
   type IconComponent,
@@ -60,7 +61,7 @@ import {
 } from '@/store/command-palette'
 import { $bindings } from '@/store/keybinds'
 import { openPetGenerate } from '@/store/pet-generate'
-import { requestStartWorkSession } from '@/store/projects'
+import { $projectTree, goToProject, openFolderAsProject, requestStartWorkSession } from '@/store/projects'
 import { $connection } from '@/store/session'
 import { runGatewayRestart } from '@/store/system-actions'
 import {
@@ -272,6 +273,12 @@ const PaletteRow = memo(function PaletteRow({
 // "Go to session ‹id›" jump for ids that aren't in the recent-200 list.
 const SESSION_ID_RE = /^\d{8}_\d{6}_[a-f0-9]{6}$/
 
+// A typed/pasted folder path: absolute (`/…`) or a Windows drive (`C:\…`).
+// Deliberately NOT `~/…`: the upsert's membership check (projectIdForCwd)
+// compares literal strings against the tree's absolute paths, so an unexpanded
+// home path would always miss and double-create.
+const FOLDER_PATH_RE = /^(\/|[A-Za-z]:[/\\]).+/
+
 type SessionRow = Awaited<ReturnType<typeof listAllProfileSessions>>['sessions'][number]
 
 const toSessionEntry = (session: SessionRow): SessionEntry => ({
@@ -359,6 +366,7 @@ export function CommandPalette() {
   const pendingPage = useStore($commandPalettePage)
   const bindings = useStore($bindings)
   const worktrees = useStore($repoWorktrees)
+  const projectTree = useStore($projectTree)
   const navigate = useNavigate()
   const { availableThemes, mode, resolvedMode, setMode, setTheme, themeName } = useTheme()
   const [search, setSearch] = useState('')
@@ -495,6 +503,34 @@ export function CommandPalette() {
     const settingsTab = (tab: string) => `${SETTINGS_ROUTE}?tab=${tab}`
     const cc = t.commandCenter
 
+    // Projects are the primary way the desktop scopes work, so they're jumpable
+    // from the palette: enter the project (sidebar scopes to it) and land on a
+    // fresh session draft at its root — stacked as a tab when main already
+    // holds a chat (palette opens never spend main). The pinned "Open folder…"
+    // row is the ⌘O upsert — pick any folder, get a project.
+    const projectGroup: PaletteGroup[] = [
+      {
+        heading: cc.projects,
+        items: [
+          {
+            action: 'workspace.openFolder',
+            icon: FolderOpen,
+            id: 'project-open-folder',
+            keywords: ['open', 'folder', 'directory', 'project', 'add', 'import', 'workspace'],
+            label: cc.openFolder,
+            run: () => void openFolderAsProject()
+          },
+          ...projectTree.map(project => ({
+            icon: FolderOpen,
+            id: `project-${project.id}`,
+            keywords: ['project', 'workspace', 'go to', project.label, ...(project.path ? [project.path] : [])],
+            label: project.label,
+            run: () => goToProject(project.id)
+          }))
+        ]
+      }
+    ]
+
     // The active repo's worktrees → "new conversation in <branch>". This is the
     // ⌘K-typed "I want to work on <branch>" reflex: each entry seeds a fresh
     // session anchored to that worktree's checkout (requestStartWorkSession),
@@ -599,6 +635,7 @@ export function CommandPalette() {
           }
         ]
       },
+      ...projectGroup,
       ...branchGroup,
       {
         heading: cc.commandCenter,
@@ -714,7 +751,7 @@ export function CommandPalette() {
           ]
         : [])
     ]
-  }, [contributedItems, go, settingsSectionLabel, t, updateVersionLabel, worktrees])
+  }, [contributedItems, go, projectTree, settingsSectionLabel, t, updateVersionLabel, worktrees])
 
   // The long, granular lists (settings fields, API keys, MCP servers, archived
   // chats) only surface once the user types — otherwise they'd bury the
@@ -739,6 +776,23 @@ export function CommandPalette() {
             keywords: ['session', 'id', 'go to', directId],
             label: `${t.commandCenter.goToSession} ${directId}`,
             runWithEvent: goSession(directId)
+          }
+        ]
+      })
+    }
+
+    // Paste/type an absolute folder path → open it as a project directly (the
+    // ⌘O upsert without the native picker). Same reflex as the raw-session-id
+    // row above.
+    if (FOLDER_PATH_RE.test(directId)) {
+      result.push({
+        items: [
+          {
+            icon: FolderOpen,
+            id: `open-folder-${directId}`,
+            keywords: ['open', 'folder', 'project', directId],
+            label: `${t.commandCenter.openFolder.replace(/…$/, '')} — ${directId}`,
+            run: () => void openFolderAsProject(directId)
           }
         ]
       })
